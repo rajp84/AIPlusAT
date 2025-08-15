@@ -11,6 +11,7 @@ import Text from 'antd/lib/typography/Text';
 import InputNumber from 'antd/lib/input-number';
 import Button from 'antd/lib/button';
 import Switch from 'antd/lib/switch';
+import Input from 'antd/lib/input';
 import Tag from 'antd/lib/tag';
 import notification from 'antd/lib/notification';
 import { ArrowRightOutlined, QuestionCircleOutlined } from '@ant-design/icons';
@@ -43,6 +44,11 @@ export interface AnnotateTaskRequestBody {
     cleanup: boolean;
     conv_mask_to_poly: boolean;
     threshold?: number;
+    prompt?: string;
+    text_prompt?: string;
+    text_threshold?: number;
+    box_threshold?: number;
+    params?: Record<string, unknown>;
 }
 
 function convertMappingToServer(mapping: FullMapping): ServerMapping {
@@ -77,9 +83,13 @@ function DetectorRunner(props: Props): JSX.Element {
     const [detectorThreshold, setDetectorThreshold] = useState<number | null>(null);
     const [modelLabels, setModelLabels] = useState<LabelInterface[]>([]);
     const [taskLabels, setTaskLabels] = useState<LabelInterface[]>([]);
+    const [textPrompt, setTextPrompt] = useState<string>('');
+    const [textThresholdGD, setTextThresholdGD] = useState<number | null>(null);
+    const [boxThresholdGD, setBoxThresholdGD] = useState<number | null>(null);
 
     const model = models.find((_model): boolean => _model.id === modelID);
     const isDetector = model?.kind === ModelKind.DETECTOR;
+    const isGroundingDino = (model?.name || '').toLowerCase().includes('grounding');
     const isReId = model?.kind === ModelKind.REID;
     const convertMasks2PolygonVisible = isDetector &&
         [LabelType.ANY, LabelType.MASK].includes(model.returnType);
@@ -205,6 +215,65 @@ function DetectorRunner(props: Props): JSX.Element {
                     </Row>
                 </div>
             )}
+            {isDetector && isGroundingDino && (
+                <div className='cvat-detector-runner-threshold-wrapper'>
+                    <Row align='middle' justify='start'>
+                        <Col span={24}>
+                            <Input
+                                placeholder='Enter prompt for GroundingDino'
+                                value={textPrompt}
+                                onChange={(e) => setTextPrompt(e.target.value)}
+                            />
+                            <Text>Prompt</Text>
+                            <CVATTooltip title='Text prompt to guide GroundingDINO detections'>
+                                <QuestionCircleOutlined className='cvat-info-circle-icon' />
+                            </CVATTooltip>
+                        </Col>
+                    </Row>
+                </div>
+            )}
+            {isDetector && isGroundingDino && (
+                <div className='cvat-detector-runner-threshold-wrapper'>
+                    <Row align='middle' justify='start' gutter={[12, 12]}>
+                        <Col>
+                            <InputNumber
+                                min={0.0}
+                                step={0.01}
+                                max={1}
+                                value={textThresholdGD}
+                                onChange={(value: number | null) => setTextThresholdGD(value)}
+                            />
+                        </Col>
+                        <Col>
+                            <Text>Text threshold</Text>
+                            <CVATTooltip title='Minimum text score for GroundingDINO word tokens'>
+                                <QuestionCircleOutlined className='cvat-info-circle-icon' />
+                            </CVATTooltip>
+                        </Col>
+                    </Row>
+                </div>
+            )}
+            {isDetector && isGroundingDino && (
+                <div className='cvat-detector-runner-threshold-wrapper'>
+                    <Row align='middle' justify='start' gutter={[12, 12]}>
+                        <Col>
+                            <InputNumber
+                                min={0.0}
+                                step={0.01}
+                                max={1}
+                                value={boxThresholdGD}
+                                onChange={(value: number | null) => setBoxThresholdGD(value)}
+                            />
+                        </Col>
+                        <Col>
+                            <Text>Box threshold</Text>
+                            <CVATTooltip title='Minimum confidence for GroundingDINO boxes'>
+                                <QuestionCircleOutlined className='cvat-info-circle-icon' />
+                            </CVATTooltip>
+                        </Col>
+                    </Row>
+                </div>
+            )}
             {isReId ? (
                 <div>
                     <Row align='middle' justify='start'>
@@ -258,13 +327,45 @@ function DetectorRunner(props: Props): JSX.Element {
                             if (!model) return;
                             const serverMapping = convertMappingToServer(mapping);
                             if (model.kind === ModelKind.DETECTOR) {
-                                const body: AnnotateTaskRequestBody = {
+                                let body: AnnotateTaskRequestBody = {
                                     type: 'annotate_task',
                                     mapping: serverMapping,
                                     cleanup,
                                     conv_mask_to_poly: convertMasksToPolygons,
                                     ...(detectorThreshold !== null ? { threshold: detectorThreshold } : {}),
                                 };
+
+                                // Always include extra params if provided (even if model name check fails)
+                                const trimmedPrompt = textPrompt.trim();
+                                const extraFlat: Record<string, unknown> = {};
+                                const extraParams: Record<string, unknown> = {};
+                                if (trimmedPrompt) {
+                                    extraFlat.prompt = trimmedPrompt;
+                                    extraFlat.text_prompt = trimmedPrompt;
+                                    extraFlat.text = trimmedPrompt;
+                                    extraFlat.phrase = trimmedPrompt;
+                                    extraFlat.phrases = [trimmedPrompt];
+                                    extraFlat.query = trimmedPrompt;
+                                    extraFlat.queries = [trimmedPrompt];
+                                    extraParams.prompt = trimmedPrompt;
+                                    extraParams.text = trimmedPrompt;
+                                    extraParams.phrase = trimmedPrompt;
+                                }
+                                if (textThresholdGD !== null) {
+                                    extraFlat.text_threshold = textThresholdGD;
+                                    extraFlat.text_thr = textThresholdGD;
+                                    extraParams.text_threshold = textThresholdGD;
+                                    extraParams.text_thr = textThresholdGD;
+                                }
+                                if (boxThresholdGD !== null) {
+                                    extraFlat.box_threshold = boxThresholdGD;
+                                    extraFlat.box_thr = boxThresholdGD;
+                                    extraParams.box_threshold = boxThresholdGD;
+                                    extraParams.box_thr = boxThresholdGD;
+                                }
+                                if (Object.keys(extraFlat).length) {
+                                    body = { ...body, ...extraFlat, params: { ...extraParams } };
+                                }
 
                                 runInference(model, body);
                             } else if (model.kind === ModelKind.REID) {

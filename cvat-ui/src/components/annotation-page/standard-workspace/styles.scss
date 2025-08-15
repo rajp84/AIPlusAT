@@ -47,7 +47,7 @@
                 display: flex;
 
                 div[role="tab"] {
-                    color: $text-color;
+                    color: $header-text-color;
                 }
 
                 div[role="tabpanel"] {
@@ -102,6 +102,10 @@
     &:hover:not(.cvat-disabled-canvas-control) {
         background: $header-color;
         transform: scale(0.75);
+
+        svg, svg * {
+            fill: $header-text-color;
+        }
     }
 
     &:active:not(.cvat-disabled-canvas-control) {
@@ -123,8 +127,12 @@
 }
 
 .cvat-active-canvas-control {
-    background: $header-color;
+    background: $secondary-color;
     transform: scale(0.75);
+
+    svg, svg * {
+        fill: $header-text-color;
+    }
 }
 
 .cvat-disabled-canvas-control > svg {

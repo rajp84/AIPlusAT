@@ -256,3 +256,24 @@ html, body {
         }
     }
 }
+
+/* CUSTOM STYLE OVERRIDES */
+.ant-dropdown-menu-item:hover,
+.ant-dropdown-menu-item-active,
+.ant-dropdown-menu-item-selected {
+  color: #fff !important;
+}
+
+.ant-dropdown-menu-item:hover .ant-dropdown-menu-title-content,
+.ant-dropdown-menu-item:hover a {
+  color: #fff !important;
+}
+
+.cvat-objects-appearance-collapse-header {
+    color: $header-text-color !important;
+
+    span, svg, svg * {
+        fill: $header-text-color !important;
+        color: $header-text-color !important;
+    }
+}

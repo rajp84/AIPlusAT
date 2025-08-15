@@ -781,6 +781,9 @@ CLOUD_DATA_DOWNLOADING_MAX_THREADS_NUMBER_PER_CPU = 4
 TMP_FILE_OR_DIR_RETENTION_DAYS = 3
 
 LOGO_FILENAME = "logo.svg"
+# Optional alternative UI logo filename; if set, the server will expose this logo via the about endpoint
+# You can also override via environment variable PIXIT_LOGO_FILENAME
+PIXIT_LOGO_FILENAME = os.getenv("PIXIT_LOGO_FILENAME", None)
 ABOUT_INFO = {
     "subtitle": "Open Data Annotation Platform",
 }

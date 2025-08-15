@@ -76,13 +76,14 @@
         display: flex;
 
         > .cvat-annotation-header-button.cvat-annotation-header-menu-button {
+            margin-left: 0;
             width: $grid-unit-size * 9;
-            background: black;
+            background: $secondary-color;
             color: white;
-            border-radius: $border-radius-base;
+            border-radius: 0;
 
             &:hover {
-                background: black;
+                background: #292b4bdd;
                 color: white;
             }
 

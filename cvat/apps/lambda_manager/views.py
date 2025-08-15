@@ -147,6 +147,7 @@ class LambdaGateway:
             url = f"http://localhost:{func.port}"
 
         with make_requests_session() as session:
+            # Direct invoke expects raw event body as posted JSON; keep it flat
             reply = session.post(url, timeout=NUCLIO_TIMEOUT, json=payload)
             reply.raise_for_status()
             response = reply.json()
@@ -466,28 +467,57 @@ class LambdaFunction:
                     )
 
         if self.kind == FunctionKind.DETECTOR:
-            payload.update({"image": self._get_image(db_task, mandatory_arg("frame"))})
+            image_b64 = self._get_image(db_task, mandatory_arg("frame"))
+            # Flatten for detectors: top-level 'image' and aliases/thresholds
+            payload = { "image": image_b64 }
+            if threshold := data.get("threshold"):
+                payload["threshold"] = threshold
+
+            # Merge aliases from both top-level and nested params
+            alias_keys = [
+                "prompt", "text_prompt", "text", "query", "phrase",
+                "phrases", "queries",
+                "text_threshold", "box_threshold", "text_thr", "box_thr",
+            ]
+            combined_params = {}
+            extra_params = data.get("params") if isinstance(data.get("params"), dict) else {}
+            for key in alias_keys:
+                if key in data and data[key] is not None:
+                    combined_params[key] = data[key]
+                if key in extra_params and extra_params[key] is not None:
+                    combined_params[key] = extra_params[key]
+
+            # Promote combined params to top-level and also include nested 'params' for handlers reading it
+            for key, value in combined_params.items():
+                payload[key] = value
+            if combined_params:
+                payload["params"] = combined_params
         elif self.kind == FunctionKind.INTERACTOR:
-            payload.update(
-                {
-                    "image": self._get_image(db_task, mandatory_arg("frame")),
+            image_b64 = self._get_image(db_task, mandatory_arg("frame"))
+            params_payload = data.get("params") if isinstance(data.get("params"), dict) else {}
+            payload = {
+                "body": {
+                    "image": image_b64,
                     "pos_points": mandatory_arg("pos_points"),
                     "neg_points": mandatory_arg("neg_points"),
                     "obj_bbox": data.get("obj_bbox", None),
-                }
-            )
+                },
+                "params": params_payload,
+            }
         elif self.kind == FunctionKind.REID:
-            payload.update(
-                {
+            params_payload = data.get("params") if isinstance(data.get("params"), dict) else {}
+            payload = {
+                "body": {
                     "image0": self._get_image(db_task, mandatory_arg("frame0")),
                     "image1": self._get_image(db_task, mandatory_arg("frame1")),
                     "boxes0": mandatory_arg("boxes0"),
                     "boxes1": mandatory_arg("boxes1"),
-                }
-            )
+                },
+                "params": params_payload,
+            }
             max_distance = data.get("max_distance")
             if max_distance:
-                payload.update({"max_distance": max_distance})
+                payload["body"]["max_distance"] = max_distance
         elif self.kind == FunctionKind.TRACKER:
             signer = TimestampSigner(salt=f"cvat-tracker-state:{self.id}")
 
@@ -530,8 +560,9 @@ class LambdaFunction:
                     states = data["states"]
                     shapes = data["shapes"]
 
-                payload.update(
-                    {
+                params_payload = data.get("params") if isinstance(data.get("params"), dict) else {}
+                payload = {
+                    "body": {
                         "image": self._get_image(db_task, mandatory_arg("frame")),
                         "shapes": list(map(prepare_shape, shapes)),
                         "states": [
@@ -544,8 +575,9 @@ class LambdaFunction:
                             )
                             for state in states
                         ],
-                    }
-                )
+                    },
+                    "params": params_payload,
+                }
             except BadSignature as ex:
                 raise ValidationError("Invalid or expired tracker state") from ex
         else:
@@ -556,6 +588,41 @@ class LambdaFunction:
 
         if is_interactive and request:
             interactive_function_call_signal.send(sender=self, request=request)
+
+        # Forward additional model-specific parameters
+        alias_keys = [
+            "prompt", "text_prompt", "text", "query", "phrase",
+            "phrases", "queries",
+            "text_threshold", "box_threshold", "text_thr", "box_thr",
+        ]
+        extra_params = data.get("params") if isinstance(data.get("params"), dict) else {}
+        # Merge top-level aliases into params
+        combined_params = {**extra_params}
+        for key in alias_keys:
+            if key in data and data[key] is not None and key not in combined_params:
+                combined_params[key] = data[key]
+        # Prefer sending under 'params' for Nuclio handlers, but also mirror flat keys
+        if combined_params:
+            payload["params"] = combined_params
+            for key, value in combined_params.items():
+                if key not in payload:
+                    payload[key] = value
+
+        # Debug: log selected payload fields to verify forwarding of custom params
+        try:
+            debug_fields = {
+                k: payload.get(k)
+                for k in [
+                    "prompt", "text_prompt", "text", "phrase",
+                    "text_threshold", "box_threshold", "text_thr", "box_thr",
+                    "params",
+                ]
+            }
+            slogger.glob.info(
+                "Invoking lambda %s with fields: %s", self.id, json.dumps(debug_fields)
+            )
+        except Exception:
+            pass
 
         response = self.gateway.invoke(self, payload)
 
@@ -683,6 +750,7 @@ class LambdaQueue:
         request,
         *,
         job: Optional[int] = None,
+        params: Optional[dict] = None,
     ) -> LambdaJob:
         queue = self._get_queue()
         rq_id = RequestId(
@@ -729,6 +797,7 @@ class LambdaQueue:
                         "conv_mask_to_poly": conv_mask_to_poly,
                         "mapping": mapping,
                         "max_distance": max_distance,
+                        "params": params,
                     },
                     depends_on=define_dependent_job(queue, user_id),
                     result_ttl=self.RESULT_TTL.total_seconds(),
@@ -986,6 +1055,7 @@ class LambdaJob:
         conv_mask_to_poly: bool,
         *,
         db_job: Optional[Job] = None,
+        params: Optional[dict] = None,
     ):
         collector = DetectionResultCollector(db_task, db_job)
 
@@ -1005,6 +1075,7 @@ class LambdaJob:
                     "mapping": mapping,
                     "threshold": threshold,
                     "conv_mask_to_poly": conv_mask_to_poly,
+                    **({"params": params} if params else {}),
                 },
                 converter=converter,
             )
@@ -1058,6 +1129,7 @@ class LambdaJob:
         max_distance: int,
         *,
         db_job: Optional[Job] = None,
+        params: Optional[dict] = None,
     ):
         if db_job:
             data = dm.task.get_job_data(db_job.id)
@@ -1095,6 +1167,7 @@ class LambdaJob:
                         "boxes1": boxes1,
                         "threshold": threshold,
                         "max_distance": max_distance,
+                        **({"params": params} if params else {}),
                     },
                 )
 
@@ -1180,6 +1253,7 @@ class LambdaJob:
                 kwargs.get("mapping"),
                 kwargs.get("conv_mask_to_poly"),
                 db_job=db_job,
+                params=kwargs.get("params"),
             )
         elif function.kind == FunctionKind.REID:
             cls._call_reid(
@@ -1188,6 +1262,7 @@ class LambdaJob:
                 kwargs.get("threshold"),
                 kwargs.get("max_distance"),
                 db_job=db_job,
+                params=kwargs.get("params"),
             )
 
 
@@ -1408,6 +1483,18 @@ class RequestViewSet(viewsets.ViewSet):
             conv_mask_to_poly = request_data.get("conv_mask_to_poly", False)
             mapping = request_data.get("mapping")
             max_distance = request_data.get("max_distance")
+            params = request_data.get("params")
+            # Merge top-level alias fields into params to ensure they are forwarded
+            alias_keys = [
+                "prompt", "text_prompt", "text", "query", "phrase",
+                "phrases", "queries",
+                "text_threshold", "box_threshold", "text_thr", "box_thr",
+            ]
+            combined_params = {**(params or {})}
+            for key in alias_keys:
+                if key in request_data and request_data[key] is not None:
+                    combined_params[key] = request_data[key]
+            params = combined_params or None
         except KeyError as err:
             raise ValidationError(
                 "`{}` lambda function was run ".format(request_data.get("function", "undefined"))
@@ -1418,6 +1505,17 @@ class RequestViewSet(viewsets.ViewSet):
         gateway = LambdaGateway()
         queue = LambdaQueue()
         lambda_func = gateway.get(function)
+        try:
+            slogger.glob.info(
+                "AA request validated keys=%s, params_preview=%s",
+                list(request_data.keys()),
+                json.dumps({ k: params.get(k) for k in (params or {}) if k in [
+                    "prompt","text","text_prompt","phrase","text_thr","box_thr",
+                    "text_threshold","box_threshold"
+                ] }) if params else {}
+            )
+        except Exception:
+            pass
         rq_job = queue.enqueue(
             lambda_func,
             threshold,
@@ -1428,6 +1526,7 @@ class RequestViewSet(viewsets.ViewSet):
             max_distance,
             request,
             job=job,
+            params=params,
         )
 
         handle_function_call(function, job or task, category="batch")

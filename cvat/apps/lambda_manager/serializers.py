@@ -48,6 +48,18 @@ class FunctionCallRequestSerializer(serializers.Serializer):
         required=False,
         help_text="Label mapping from the model to the task labels",
     )
+    params = serializers.DictField(
+        child=serializers.JSONField(),
+        required=False,
+        help_text="Additional model-specific parameters forwarded to the function",
+    )
+    # Compatibility aliases for common model parameters (accepted but not used directly)
+    prompt = serializers.CharField(required=False)
+    text_prompt = serializers.CharField(required=False)
+    text = serializers.CharField(required=False)
+    query = serializers.CharField(required=False)
+    phrases = serializers.ListField(child=serializers.CharField(), required=False)
+    queries = serializers.ListField(child=serializers.CharField(), required=False)
 
 
 class FunctionCallParamsSerializer(serializers.Serializer):

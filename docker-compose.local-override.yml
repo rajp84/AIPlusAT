@@ -1,0 +1,65 @@
+services:
+  # stop the bundled UI to avoid conflicts
+  cvat_ui:
+    deploy:
+      replicas: 0
+
+  # reverse-proxy that points to your local dev UI on :3000
+  cvat_ui_dev:
+    image: nginx:alpine
+    container_name: cvat_ui_dev
+    volumes:
+      - ./dev-ui.nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - cvat
+    labels:
+      - "traefik.enable=true"
+
+      # Route all non-/api requests on localhost:8080 to this container
+      - "traefik.http.routers.cvat-ui-dev.rule=Host(`localhost`) && PathPrefix(`/`) && !PathPrefix(`/api`)"
+      - "traefik.http.routers.cvat-ui-dev.entrypoints=web"
+      - "traefik.http.routers.cvat-ui-dev.priority=1"
+      - "traefik.http.services.cvat-ui-dev.loadbalancer.server.port=80"
+
+
+  cvat_db:
+    # don’t publish Postgres to host
+    ports: []
+
+  cvat_redis_inmem:
+    ports: []
+
+  cvat_redis_ondisk:
+    ports: []
+
+  cvat_worker_annotation:
+    image: cvat/server:local
+
+  cvat_server:
+    image: cvat/server:local
+    # only expose the API
+    # ports:
+    #   - "8080:8080"
+    environment:
+      DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1"
+      CSRF_TRUSTED_ORIGINS: "http://localhost:3000,http://127.0.0.1:3000"
+      CVAT_SERVERLESS: "1"
+      CVAT_NUCLIO_HOST: "nuclio"
+      CVAT_NUCLIO_PORT: "8070"
+      CVAT_NUCLIO_HTTPS: "0"
+      NO_PROXY: "nuclio,cvat_serverless,localhost,127.0.0.1"
+      # you already have the Nuclio envs; add these:
+      DJANGO_CSRF_TRUSTED_ORIGINS: "http://localhost:3000,http://127.0.0.1:3000"
+      DJANGO_CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://127.0.0.1:3000"
+      # If you're on plain HTTP in dev (not HTTPS):
+      CSRF_COOKIE_SECURE: "0"
+      SESSION_COOKIE_SECURE: "0"
+
+  # Optional: if you want to view OPA UI, uncomment:
+  # cvat_opa:
+  #   ports:
+  #     - "8181:8181"
+
+networks:
+  cvat_cvat:
+    external: true

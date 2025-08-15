@@ -26,6 +26,7 @@ import { getInvitationsAsync } from 'actions/invitations-actions';
 import { getRequestsAsync } from 'actions/requests-async-actions';
 import { getServerAPISchemaAsync } from 'actions/server-actions';
 import { navigationActions } from 'actions/navigation-actions';
+import { ConfigProvider } from 'antd';
 import { CombinedState, NotificationsState, PluginsState } from './reducers';
 
 createCVATStore(createRootReducer);
@@ -135,11 +136,34 @@ const ReduxAppWrapper = connect(mapStateToProps, mapDispatchToProps)(CVATApplica
 const root = createRoot(document.getElementById('root') as HTMLDivElement);
 root.render((
     <Provider store={cvatStore}>
-        <BrowserRouter>
-            <PluginsEntrypoint />
-            <ReduxAppWrapper />
-        </BrowserRouter>
-        <LayoutGrid />
+        <ConfigProvider
+            theme={{
+                token: {
+                    colorPrimary: '#363b66',
+                    colorInfo: '#292b4b',
+                    colorInfoBg: 'rgba(156,158,166,0.47)',
+                },
+                components: {
+                    Dropdown: {
+                        controlItemBgHover: '#363b66',
+                        controlItemBgActive: '#e0e5ff',
+                    },
+                    Menu: {
+                        itemHoverBg: '#eef0ff',
+                        itemActiveBg: '#e0e5ff',
+                        itemSelectedBg: '#e0e5ff',
+                        itemHoverColor: '#363b66',
+                        itemSelectedColor: '#363b66',
+                    },
+                },
+            }}
+        >
+            <BrowserRouter>
+                <PluginsEntrypoint />
+                <ReduxAppWrapper />
+            </BrowserRouter>
+            <LayoutGrid />
+        </ConfigProvider>
     </Provider>
 ));
 
