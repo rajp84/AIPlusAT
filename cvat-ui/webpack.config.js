@@ -175,6 +175,7 @@ module.exports = (env) => {
             new HtmlWebpackPlugin({
                 template: './src/index.html',
                 inject: 'body',
+                favicon: path.resolve(__dirname, 'src/assets/favicon.ico')
             }),
             new Dotenv({
                 systemvars: true,

@@ -492,6 +492,21 @@ class LambdaFunction:
                 payload[key] = value
             if combined_params:
                 payload["params"] = combined_params
+
+            # Always include labels hint derived from mapping so downstream can build a prompt
+            try:
+                labels_hint = [
+                    mapping_item.get("name")
+                    for mapping_item in (mapping or {}).values()
+                    if isinstance(mapping_item, dict) and mapping_item.get("name")
+                ]
+                if labels_hint:
+                    payload["labels"] = labels_hint
+                    if "params" in payload and isinstance(payload["params"], dict):
+                        payload["params"].setdefault("labels", labels_hint)
+            except Exception:
+                # Non-fatal if labels cannot be derived; continue without them
+                pass
         elif self.kind == FunctionKind.INTERACTOR:
             image_b64 = self._get_image(db_task, mandatory_arg("frame"))
             params_payload = data.get("params") if isinstance(data.get("params"), dict) else {}
@@ -601,6 +616,9 @@ class LambdaFunction:
         for key in alias_keys:
             if key in data and data[key] is not None and key not in combined_params:
                 combined_params[key] = data[key]
+        # If we computed a labels hint earlier, also include it into params for handlers expecting it there
+        if "labels" in payload and isinstance(payload["labels"], list) and payload["labels"]:
+            combined_params.setdefault("labels", payload["labels"])
         # Prefer sending under 'params' for Nuclio handlers, but also mirror flat keys
         if combined_params:
             payload["params"] = combined_params
@@ -615,7 +633,7 @@ class LambdaFunction:
                 for k in [
                     "prompt", "text_prompt", "text", "phrase",
                     "text_threshold", "box_threshold", "text_thr", "box_thr",
-                    "params",
+                    "labels", "params",
                 ]
             }
             slogger.glob.info(

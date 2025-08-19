@@ -24,3 +24,11 @@ Start the UI locally
 `yarn workspace cvat-ui run start`
 
 UI is available at `http://localhost:8080`
+
+## rebuild after changes:
+
+```
+docker build -f Dockerfile -t cvat/server:local .
+
+docker compose -f docker-compose.yml -f components/serverless/docker-compose.serverless.yml -f docker-compose.local-override.yml up -d --build cvat_server cvat_worker_annotation
+```

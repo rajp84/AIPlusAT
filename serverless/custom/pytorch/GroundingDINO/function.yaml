@@ -1,0 +1,61 @@
+metadata:
+  name: groundingdino
+  labels:
+    nuclio.io/project-name: cvat
+  annotations:
+    framework: pytorch
+    icon: https://raw.githubusercontent.com/IDEA-Research/GroundingDINO/refs/heads/main/.asset/grounding_dino_logo.png
+    name: GroundingDINO
+    spec: '[   { "id": 1, "name": "object" } ]'
+    type: detector
+spec:
+  description: Zero-shot object detector (GroundingDINO)
+  handler: main:handler
+  runtime: python:3.10
+  env:
+  - name: DINO_CFG
+    value: groundingdino/config/GroundingDINO_SwinT_OGC.py
+  - name: DINO_WEIGHTS_URL
+    value: https://github.com/IDEA-Research/GroundingDINO/releases/download/v0.1.0-alpha/groundingdino_swint_ogc.pth
+  - name: USE_GPU
+    value: '0'
+  resources:
+    limits:
+      nvidia.com/gpu: '1'
+    requests:
+      cpu: 25m
+      memory: 256Mi
+  image: nuclio/processor-groundingdino:latest
+  triggers:
+    http:
+      class: ''
+      kind: http
+      name: http
+      numWorkers: 1
+      workerAvailabilityTimeoutMilliseconds: 10000
+      attributes:
+        maxRequestBodySize: 33554432
+        readBufferSize: 16777216
+        serviceType: ClusterIP
+      maxWorkers: 1
+  version: 1
+  build:
+    baseImage: pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime
+    commands:
+    - apt-get update && apt-get install -y --no-install-recommends git ffmpeg libgl1
+      libglib2.0-0 && rm -rf /var/lib/apt/lists/*
+    - pip install --no-cache-dir numpy==1.26.4 pillow opencv-python timm "transformers<4.56"
+      requests
+    - pip install --no-cache-dir git+https://github.com/IDEA-Research/GroundingDINO.git
+    runtimeAttributes:
+      repositories: []
+    codeEntryType: sourceCode
+  loggerSinks:
+  - level: debug
+  platform:
+    attributes:
+      network: cvat_cvat
+  readinessTimeoutSeconds: 600
+  securityContext: {}
+  disableDefaultHTTPTrigger: false
+  eventTimeout: ''
