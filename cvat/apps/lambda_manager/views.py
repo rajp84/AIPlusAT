@@ -11,6 +11,7 @@ import os
 import textwrap
 from copy import deepcopy
 from datetime import timedelta
+import time
 from functools import wraps
 from typing import Any, Optional
 
@@ -139,12 +140,22 @@ class LambdaGateway:
         )
 
     def _invoke_directly(self, func, payload):
-        # host.docker.internal for Linux will work only with Docker 20.10+
+        # If the function port is not available, fallback to dashboard invoke
         NUCLIO_TIMEOUT = settings.NUCLIO["DEFAULT_TIMEOUT"]
+        try:
+            port = getattr(func, "port", None)
+        except Exception:
+            port = None
+
+        if not port:
+            # Fallback: use dashboard API which routes by function id
+            return self._invoke_via_dashboard(func, payload)
+
+        # host.docker.internal for Linux will work only with Docker 20.10+
         if os.path.exists("/.dockerenv"):  # inside a docker container
-            url = f"http://host.docker.internal:{func.port}"
+            url = f"http://host.docker.internal:{port}"
         else:
-            url = f"http://localhost:{func.port}"
+            url = f"http://localhost:{port}"
 
         with make_requests_session() as session:
             # Direct invoke expects raw event body as posted JSON; keep it flat
@@ -172,7 +183,13 @@ class LambdaFunction:
         # ID of the function (e.g. omz.public.yolo-v3)
         self.id = data["metadata"]["name"]
         # type of the function (e.g. detector, interactor)
-        meta_anno: dict[str, str] = data["metadata"]["annotations"]
+        meta_anno: dict[str, str] | None = (
+            data.get("metadata", {}).get("annotations") if isinstance(data.get("metadata"), dict) else None
+        )
+        if not meta_anno:
+            raise InvalidFunctionMetadataError(
+                f"{self.id} lambda function has no annotations in metadata"
+            )
         kind = meta_anno.get("type")
         try:
             self.kind = FunctionKind(kind)
@@ -273,6 +290,18 @@ class LambdaFunction:
             "name": self.name,
             "version": self.version,
         }
+
+        # Expose a direct URL for clients which need to call the function directly
+        # (e.g., long-running training jobs managed outside of CVAT RQ).
+        # Nuclio exposes an HTTP port in status; when available, construct a localhost URL.
+        # Consumers outside the container (browser) typically reach the function via localhost.
+        try:
+            if self.port:
+                # Use localhost by default; environments with different routing can override in UI
+                response["url"] = f"http://localhost:{self.port}"
+        except Exception:
+            # Do not fail listing if URL cannot be constructed
+            pass
 
         if self.kind is FunctionKind.INTERACTOR:
             response.update(
@@ -1025,6 +1054,15 @@ class LambdaJob:
             "ended": self.job.ended_at,
             "exc_info": self.job.exc_info,
         }
+        # Expose selected RQ job meta fields so the UI can open training status by rq_id
+        try:
+            if isinstance(self.job.meta, dict):
+                if self.job.meta.get("nuclio_job_id"):
+                    dict_["nuclio_job_id"] = self.job.meta.get("nuclio_job_id")
+                if self.job.meta.get("trainer_base"):
+                    dict_["trainer_base"] = self.job.meta.get("trainer_base")
+        except Exception:
+            pass
         if dict_["status"] == rq.job.JobStatus.DEFERRED:
             dict_["status"] = rq.job.JobStatus.QUEUED.value
 
@@ -1262,6 +1300,92 @@ class LambdaJob:
                 dm.task.delete_task_data(db_task.id)
             else:
                 assert False
+
+        # Special case: training job routed to Nuclio trainer function
+        # Triggered when the function name/id indicates trainer or params request training
+        try:
+            params = kwargs.get("params") or {}
+            is_training = (
+                (isinstance(function.name, str) and "trainer" in function.name.lower())
+                or (isinstance(function.id, str) and "trainer" in function.id.lower())
+                or (isinstance(params, dict) and str(params.get("__action", "")) == "train")
+            )
+        except Exception:
+            is_training = False
+        if is_training:
+            try:
+                from rq import get_current_job
+                import requests as _requests
+                # Discover direct base URL for the same function via its http port
+                if os.path.exists("/.dockerenv") and function.port:
+                    trainer_base = f"http://host.docker.internal:{function.port}"
+                elif function.port:
+                    trainer_base = f"http://localhost:{function.port}"
+                else:
+                    # Fallback via gateway invoke path
+                    trainer_base = None
+                payload = dict(params or {})
+                # Ensure action defaults to train
+                payload.setdefault("__action", "train")
+                # Pass through common training defaults if not provided
+                payload.setdefault("imgsz", 1280)
+                payload.setdefault("epochs", 100)
+                payload.setdefault("batch", 16)
+                payload.setdefault("device", "0")
+                payload.setdefault("workers", 8)
+                payload.setdefault("model", "yolov8s.pt")
+                # Start training
+                if trainer_base:
+                    resp = _requests.post(f"{trainer_base}/train", json=payload, timeout=300)
+                    resp.raise_for_status()
+                    job_id = resp.json().get("job_id")
+                else:
+                    # Use gateway direct invoke if port is not known
+                    gateway = LambdaGateway()
+                    resp = gateway._invoke_directly(function, payload)
+                    job_id = resp.get("job_id")
+                rq_job = get_current_job()
+                if rq_job:
+                    rq_job.meta["nuclio_job_id"] = job_id
+                    if trainer_base:
+                        rq_job.meta["trainer_base"] = trainer_base
+                    rq_job.save_meta()
+                # Poll status until finished/failed to keep the request visible as running
+                status_val = "running"
+                while status_val not in ("finished", "failed"):
+                    try:
+                        base = trainer_base or (f"http://localhost:{function.port}" if function.port else None)
+                        if not base:
+                            break
+                        sr = _requests.get(f"{base}/status", params={"id": job_id}, timeout=30)
+                        if sr.ok:
+                            body = sr.json()
+                            status_val = body.get("status", status_val)
+                            # propagate progress if available (0..1)
+                            try:
+                                prog = body.get("progress")
+                                if prog is not None:
+                                    LambdaJob._update_progress(float(prog))
+                            except Exception:
+                                pass
+                        else:
+                            # keep running on transient errors
+                            pass
+                    except Exception:
+                        pass
+                    # Update progress meta heuristically (unknown exact progress)
+                    try:
+                        LambdaJob._update_progress(0.0)
+                    except Exception:
+                        pass
+                    time.sleep(2)
+                # Mark RQ job failed if trainer reports failed
+                if status_val == "failed":
+                    raise RuntimeError("Training failed. See trainer logs for details")
+            except Exception as ex:
+                # Surface failure to RQ
+                raise
+            return
 
         if function.kind == FunctionKind.DETECTOR:
             cls._call_detector(

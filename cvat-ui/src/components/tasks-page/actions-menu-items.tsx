@@ -21,6 +21,7 @@ interface MenuItemsData {
     onExportDataset: () => void;
     onBackupTask: () => void;
     onRunAutoAnnotation: (() => void) | null;
+    onTrain: (() => void) | null;
     onMoveTaskToProject: (() => void) | null;
     onDeleteTask: () => void;
     startEditField: (key: string) => void;
@@ -40,6 +41,7 @@ export default function TaskActionsItems(menuItemsData: MenuItemsData, taskMenuP
         onOpenBugTracker,
         onBackupTask,
         onRunAutoAnnotation,
+        onTrain,
         onMoveTaskToProject,
         onDeleteTask,
         selectedIds,
@@ -82,6 +84,14 @@ export default function TaskActionsItems(menuItemsData: MenuItemsData, taskMenuP
         onClick: onRunAutoAnnotation ?? undefined,
         label: withCount('Automatic annotation', 'run_auto_annotation'),
     }, 30]);
+
+    // Training entry to trigger serverless training functions via the same model runner dialog
+    menuItems.push([{
+        disabled: isAutomaticAnnotationEnabled || isDisabled('train_model'),
+        key: 'train_model',
+        onClick: onTrain ?? undefined,
+        label: withCount('Train model', 'train_model'),
+    }, 35]);
 
     menuItems.push([{
         key: 'backup_task',

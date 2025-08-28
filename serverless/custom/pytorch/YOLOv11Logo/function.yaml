@@ -1,0 +1,74 @@
+metadata:
+  name: yolov11-logo
+  labels:
+    nuclio.io/project-name: cvat
+  annotations:
+    framework: pytorch
+    icon: https://raw.githubusercontent.com/ultralytics/assets/main/logo/ultralytics-icon.svg
+    name: YOLOv11 Logo Detector
+    spec: '[ { "id": 1, "name": "logo" } ]'
+    type: detector
+spec:
+  description: YOLOv11 (Ultralytics) logo detector for CVAT Auto Annotation
+  handler: main:handler
+  runtime: python:3.10
+  env:
+  - name: MODEL_PATH
+    value: /opt/nuclio/yolo11-logo.pt
+  - name: MODEL_URL
+    value: ''
+  - name: USE_GPU
+    value: '1'
+  - name: CONF_THRESHOLD
+    value: '0.25'
+  - name: IOU_THRESHOLD
+    value: '0.45'
+  - name: OUTPUT_LABEL
+    value: logo
+  - name: FILTER_CLASSES
+    value: ''
+  - name: USE_MODEL_LABELS
+    value: '0'
+  resources:
+    limits:
+      nvidia.com/gpu: '1'
+    requests:
+      cpu: 100m
+      memory: 512Mi
+  image: nuclio/processor-yolov11-logo:latest
+  triggers:
+    http:
+      class: ''
+      kind: http
+      name: http
+      numWorkers: 1
+      workerAvailabilityTimeoutMilliseconds: 10000
+      attributes:
+        maxRequestBodySize: 33554432
+        readBufferSize: 16777216
+        serviceType: ClusterIP
+      maxWorkers: 1
+  version: 1
+  build:
+    baseImage: pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime
+    commands:
+    - apt-get update && apt-get install -y --no-install-recommends git ffmpeg libgl1 libglib2.0-0 curl && rm -rf /var/lib/apt/lists/*
+    - pip install --no-cache-dir numpy==1.26.4 pillow opencv-python requests ultralytics
+    directives:
+      preCopy:
+        - kind: ADD
+          value: yolo11-logo.pt /opt/nuclio/yolo11-logo.pt
+    runtimeAttributes:
+      repositories: []
+    codeEntryType: sourceCode
+  loggerSinks:
+  - level: debug
+  platform:
+    attributes:
+      network: cvat_cvat
+  readinessTimeoutSeconds: 600
+  securityContext: {}
+  disableDefaultHTTPTrigger: false
+  eventTimeout: ''
+
+

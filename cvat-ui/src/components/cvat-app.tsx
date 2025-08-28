@@ -84,6 +84,8 @@ import AnalyticsReportPage from './analytics-report/analytics-report-page';
 import ConsensusManagementPage from './consensus-management-page/consensus-management-page';
 import InvitationWatcher from './invitation-watcher/invitation-watcher';
 import BulkProgress from './bulk-progress';
+import TrainDatasetModal from './train-dataset/train-dataset-modal';
+import TrainingStatus from './train-dataset/training-status';
 
 interface CVATAppProps {
     loadFormats: () => void;
@@ -585,6 +587,8 @@ class CVATApplication extends React.PureComponent<CVATAppProps & RouteComponentP
                                     <ImportBackupModal />
                                     <InvitationWatcher />
                                     <UploadFileStatusModal />
+                                    <TrainDatasetModal />
+                                    <TrainingStatus />
                                     <BulkProgress />
                                     {/* eslint-disable-next-line */}
                                     <a id='downloadAnchor' target='_blank' style={{ display: 'none' }} download />

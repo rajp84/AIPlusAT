@@ -44,8 +44,55 @@ class RequestsManager {
     }
 
     async list(): Promise<PaginatedResource<Request>> {
+        // Fetch standard requests
         const result = await serverProxy.requests.list();
-        const requests = result.map((serializedRequest) => new Request({
+        // Fetch lambda requests and adapt them into the common SerializedRequest shape
+        let lambda: any[] = [];
+        try {
+            lambda = await serverProxy.lambda.requests();
+        } catch {
+            lambda = [];
+        }
+        // Current user for owner field
+        let selfUser: any = null;
+        try {
+            selfUser = await serverProxy.users.self();
+        } catch {
+            selfUser = { id: 0, username: 'unknown' };
+        }
+
+        const adaptedLambda = (Array.isArray(lambda) ? lambda : []).map((it) => {
+            const fn = it.function || {};
+            const created = it.enqueued || it.started || it.ended || new Date().toISOString();
+            return {
+                id: String(it.id),
+                status: String(it.status || 'queued').toUpperCase(),
+                operation: {
+                    target: fn.task ? 'task' : null,
+                    type: 'lambda:training',
+                    format: null,
+                    job_id: null,
+                    task_id: fn.task || null,
+                    project_id: null,
+                    function_id: fn.id || null,
+                },
+                progress: it.progress ?? 0,
+                message: it.exc_info || '',
+                result_url: undefined,
+                result_id: undefined,
+                created_date: created,
+                started_date: it.started || null,
+                finished_date: it.ended || null,
+                expiry_date: null,
+                owner: {
+                    id: selfUser?.id,
+                    username: selfUser?.username,
+                },
+            };
+        });
+
+        const combined = [...result, ...adaptedLambda];
+        const requests = combined.map((serializedRequest) => new Request({
             ...serializedRequest,
         })) as PaginatedResource<Request>;
         requests.count = requests.length;

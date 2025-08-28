@@ -59,14 +59,18 @@ export function getRequestsAsync(query: Partial<RequestsQuery> = {}): ThunkActio
                         instance = { id: projectID as number, type: target };
                     }
 
-                    if (operationType === 'export') {
+                    if (operationType === 'lambda') {
+                        // For lambda we don't have /api/requests/<id> polling; re-fetch list in the background
+                        setTimeout(() => dispatch(requestsActions.getRequests({ ...query }, false)), 2000);
+                    } else if (operationType === 'export') {
                         if (operationTarget === 'backup') {
                             listenExportBackupAsync(rqID, dispatch, { instance: instance as RequestInstanceType });
                         } else if (operationTarget === 'dataset' || operationTarget === 'annotations') {
+                            const safeFormat: string = (format || '') as string;
                             listenExportDatasetAsync(
                                 rqID,
                                 dispatch,
-                                { instance: instance as RequestInstanceType, format, saveImages: type.includes('dataset') },
+                                { instance: instance as RequestInstanceType, format: safeFormat, saveImages: type.includes('dataset') },
                             );
                         }
                     } else if (operationType === 'import') {
@@ -100,6 +104,44 @@ export function cancelRequestAsync(request: Request): ThunkAction {
             dispatch(requestsActions.cancelRequestSuccess(request));
         } catch (error) {
             dispatch(requestsActions.cancelRequestFailed(request, error));
+        }
+    };
+}
+
+export function terminateLambdaRequestAsync(request: Request): ThunkAction {
+    return async (dispatch): Promise<void> => {
+        try {
+            // DELETE /api/lambda/requests/<rq_id> with CSRF
+            const getCookie = (name: string): string => {
+                const raw = document.cookie || '';
+                if (!raw) return '';
+                const pairs = raw.split('; ');
+                for (const pair of pairs) {
+                    const eqIdx = pair.indexOf('=');
+                    const key = eqIdx === -1 ? pair : pair.slice(0, eqIdx);
+                    if (decodeURIComponent(key) === name) {
+                        const val = eqIdx === -1 ? '' : pair.slice(eqIdx + 1);
+                        return decodeURIComponent(val);
+                    }
+                }
+                return '';
+            };
+            const csrf = getCookie('csrftoken') || getCookie('cvatcsrftoken');
+            const encoded = encodeURIComponent(request.id);
+            const resp = await fetch(`/api/lambda/requests/${encoded}`, {
+                method: 'DELETE',
+                headers: { 'X-CSRFToken': csrf, 'X-Requested-With': 'XMLHttpRequest' },
+                credentials: 'include',
+            });
+            if (!resp.ok) {
+                const txt = await resp.text();
+                throw new Error(`Failed to terminate: ${resp.status} ${txt}`);
+            }
+            // Refresh list after termination
+            const requests = await core.requests.list();
+            dispatch(requestsActions.getRequestsSuccess(requests));
+        } catch (error) {
+            dispatch(requestsActions.getRequestsFailed(error));
         }
     };
 }

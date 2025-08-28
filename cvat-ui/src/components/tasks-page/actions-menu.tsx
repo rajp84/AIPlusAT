@@ -13,6 +13,7 @@ import { CombinedState } from 'reducers';
 import { exportActions } from 'actions/export-actions';
 import { importActions } from 'actions/import-actions';
 import { modelsActions } from 'actions/models-actions';
+import { trainingActions } from 'actions/training-actions';
 import { mergeConsensusJobsAsync } from 'actions/consensus-actions';
 import { deleteTaskAsync, switchMoveTaskModalVisible, updateTaskAsync } from 'actions/tasks-actions';
 import UserSelector from 'components/task-page/user-selector';
@@ -92,6 +93,12 @@ function TaskActionsComponent(props: Readonly<Props>): JSX.Element {
 
     const onRunAutoAnnotation = useCallback(() => {
         dispatch(modelsActions.showRunModelDialog(taskInstance));
+    }, [taskInstance]);
+
+    // Open model runner dialog for training functions as well
+    const onTrain = useCallback(() => {
+        // Open a training modal (will export & trigger serverless trainer)
+        dispatch(trainingActions.openTrainDatasetModal(taskInstance));
     }, [taskInstance]);
 
     const onMoveTaskToProject = useCallback(() => {
@@ -188,6 +195,7 @@ function TaskActionsComponent(props: Readonly<Props>): JSX.Element {
             onExportDataset,
             onBackupTask,
             onRunAutoAnnotation,
+            onTrain,
             onMoveTaskToProject: taskInstance.projectId === null ? onMoveTaskToProject : null,
             onDeleteTask,
             selectedIds,

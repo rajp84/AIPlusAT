@@ -1127,6 +1127,7 @@ export interface CombinedState {
     bulkActions: BulkActionsState;
     serverAPI: ServerAPIState;
     navigation: NavigationState;
+    training: import('./training-reducer').TrainingState;
 }
 
 export interface Indexable {

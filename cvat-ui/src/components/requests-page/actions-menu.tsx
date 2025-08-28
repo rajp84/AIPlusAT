@@ -7,7 +7,8 @@ import { useDispatch, useSelector } from 'react-redux';
 import Dropdown from 'antd/lib/dropdown';
 import { MenuProps } from 'antd/lib/menu';
 import { Request, RQStatus } from 'cvat-core-wrapper';
-import { cancelRequestAsync } from 'actions/requests-async-actions';
+import { trainingActions } from 'actions/training-actions';
+import { cancelRequestAsync, terminateLambdaRequestAsync } from 'actions/requests-async-actions';
 import { makeBulkOperationAsync } from 'actions/bulk-actions';
 import { CombinedState } from 'reducers';
 
@@ -34,6 +35,10 @@ function RequestActionsComponent(props: Readonly<Props>): JSX.Element | null {
 
     const downloadable = (_request: Request): boolean => !!_request.url && !cancelled[_request.id];
     const cancelable = (_request: Request): boolean => _request.status === RQStatus.QUEUED && !cancelled[_request.id];
+    const terminable = (_request: Request): boolean => {
+        const isLambda = (_request.operation?.type || '').startsWith('lambda');
+        return isLambda && [RQStatus.STARTED, RQStatus.QUEUED].includes(_request.status);
+    };
 
     let requestsToAct: Request[];
     if (isCardMenu && !downloadable(requestInstance) && !cancelable(requestInstance)) {
@@ -74,6 +79,17 @@ function RequestActionsComponent(props: Readonly<Props>): JSX.Element | null {
         ));
     }, [requestsToAct]);
 
+    const onTerminate = useCallback(() => {
+        const targets = requestsToAct.filter(terminable);
+        if (!targets.length) return;
+        targets.forEach((req) => dispatch(terminateLambdaRequestAsync(req)));
+    }, [requestsToAct]);
+
+    const onTrain = useCallback(() => {
+        if (!requestInstance.url) return;
+        dispatch(trainingActions.openTrainDatasetFromUrlModal(requestInstance.url));
+    }, [requestInstance]);
+
     // Helper to show count in label for bulk actions
     const queuedCount = requestsToAct.filter(cancelable).length;
     const downloadableCount = requestsToAct.filter(downloadable).length;
@@ -97,6 +113,24 @@ function RequestActionsComponent(props: Readonly<Props>): JSX.Element | null {
             key: 'cancel',
             label: withCount('Cancel', queuedCount),
             onClick: onCancel,
+        });
+    }
+
+    const terminableCount = requestsToAct.filter(terminable).length;
+    if (terminableCount > 0) {
+        menuItems.push({
+            key: 'terminate',
+            label: withCount('Terminate', terminableCount),
+            onClick: onTerminate,
+        });
+    }
+
+    // Add Train for downloadable (dataset) requests
+    if (downloadableCount > 0) {
+        menuItems.push({
+            key: 'train',
+            label: withCount('Train', downloadableCount),
+            onClick: onTrain,
         });
     }
 

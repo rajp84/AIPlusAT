@@ -1,0 +1,8 @@
+ultralytics>=8.2.0
+onnx>=1.14.0
+onnxruntime-gpu>=1.16.0
+numpy>=1.23.0
+opencv-python>=4.8.0
+lapx>=0.5.5
+filterpy>=1.4.5
+

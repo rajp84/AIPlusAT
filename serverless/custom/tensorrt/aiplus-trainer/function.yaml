@@ -1,0 +1,104 @@
+metadata:
+  name: aiplus-trainer
+  annotations:
+    type: "detector"
+    display_name: "AIPlus Trainer"
+    description: "Train YOLO models and build TensorRT engines"
+    version: "1"
+spec:
+  description: "AIPlus YOLO trainer with TensorRT 8.6"
+  runtime: python:3.10
+  handler: handler:handler
+  minReplicas: 1
+  maxReplicas: 1
+  targetCPU: 75
+  platform:
+    attributes:
+      network: cvat_cvat
+  volumes:
+    - volume:
+        name: workdir
+        hostPath:
+          path: /opt/aiplus/train/workdir
+      volumeMount:
+        name: workdir
+        mountPath: /opt/nuclio/workdir
+  triggers:
+    http:
+      kind: http
+      maxWorkers: 8
+  resources:
+    limits:
+      nvidia.com/gpu: 1
+  env:
+    - name: WORK_DIR
+      value: /opt/nuclio/workdir
+    - name: TMPDIR
+      value: /opt/nuclio/workdir/tmp
+    - name: ULTRALYTICS_RUNS_DIR
+      value: /opt/nuclio/workdir/runs
+    # Optional CVAT credentials for server-side dataset download
+    - name: CVAT_USER
+      value: "rajp84"
+    - name: CVAT_PASS
+      value: "Password1!@"
+    # Base URL for CVAT from inside the container when export URLs are localhost
+    - name: CVAT_BASE_URL
+      value: "http://cvat_server:8080"
+    # Optional, for reverse-proxy (Traefik) when sending requests by IP/alias but requiring Host header
+    - name: CVAT_HOST_HEADER
+      value: "cvat-server"
+  build:
+    baseImage: nvidia/cuda:11.8.0-runtime-ubuntu22.04
+    copy:
+      - src: handler.py
+        dest: /opt/nuclio/handler.py
+      - src: train.py
+        dest: /opt/nuclio/train.py
+      - src: requirements.txt
+        dest: /opt/nuclio/requirements.txt
+      - src: training-requirements.txt
+        dest: /opt/nuclio/training-requirements.txt
+      - src: assets/TensorRT-8.6.0.12.Linux.x86_64-gnu.cuda-11.8.tar.gz
+        dest: /opt/nuclio/assets/TensorRT-8.6.0.12.Linux.x86_64-gnu.cuda-11.8.tar.gz
+    directives:
+      preCopy:
+        - kind: RUN
+          value: |
+            set -e; apt-get update && apt-get install -y --no-install-recommends \
+            python3 python3-pip wget curl ca-certificates ffmpeg libgl1-mesa-glx libglib2.0-0 xz-utils && \
+            ln -sf /usr/bin/python3 /usr/bin/python && python --version && pip --version && \
+            rm -rf /var/lib/apt/lists/*
+        - kind: RUN
+          value: pip install --upgrade pip
+        - kind: RUN
+          value: pip install --extra-index-url https://download.pytorch.org/whl/cu118 torch torchvision torchaudio
+        - kind: RUN
+          value: |
+            set -e; \
+            cd /tmp; \
+            wget -q https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/linux-x86_64/cudnn-linux-x86_64-8.6.0.163_cuda11-archive.tar.xz && \
+            tar -xJf cudnn-linux-x86_64-8.6.0.163_cuda11-archive.tar.xz && \
+            cp -P cudnn-linux-x86_64-8.6.0.163_cuda11-archive/include/* /usr/local/include/ && \
+            cp -P cudnn-linux-x86_64-8.6.0.163_cuda11-archive/lib/* /usr/local/lib/ && \
+            ldconfig && \
+            rm -rf cudnn-linux-x86_64-8.6.0.163_cuda11-archive*
+      postCopy:
+        - kind: RUN
+          value: |
+            set -e; \
+            tar -xzf /opt/nuclio/assets/TensorRT-8.6.0.12.Linux.x86_64-gnu.cuda-11.8.tar.gz -C /usr/local/ && \
+            cp -P /usr/local/TensorRT-8.6.0.12/lib/*.so* /usr/lib/x86_64-linux-gnu/ && \
+            cp -r /usr/local/TensorRT-8.6.0.12/lib/stubs /usr/lib/x86_64-linux-gnu/ && \
+            cp -r /usr/local/TensorRT-8.6.0.12/include/* /usr/include/ && \
+            python3 -m pip install /usr/local/TensorRT-8.6.0.12/python/tensorrt-8.6.0-cp310-none-linux_x86_64.whl && \
+            ldconfig
+        - kind: RUN
+          value: pip install -r /opt/nuclio/requirements.txt
+        - kind: RUN
+          value: pip install -r /opt/nuclio/training-requirements.txt
+        - kind: RUN
+          value: |
+            python3 -m pip uninstall -y onnxruntime onnxruntime-gpu || true; \
+            python3 -m pip install onnxruntime-gpu==1.16.3
+
